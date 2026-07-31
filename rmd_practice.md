@@ -3,33 +3,29 @@ RMD Practice Doc
 jea
 2026-07-31
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax
-for authoring HTML, PDF, and MS Word documents. For more details on
-using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that
-includes both content as well as the output of any embedded R code
-chunks within the document. You can embed an R code chunk like this:
+I am now writing a single sentence.
 
 ``` r
-summary(cars)
+library(terra)          # raster handling and extraction
 ```
 
-    ##      speed           dist       
-    ##  Min.   : 4.0   Min.   :  2.00  
-    ##  1st Qu.:12.0   1st Qu.: 26.00  
-    ##  Median :15.0   Median : 36.00  
-    ##  Mean   :15.4   Mean   : 42.98  
-    ##  3rd Qu.:19.0   3rd Qu.: 56.00  
-    ##  Max.   :25.0   Max.   :120.00
+    ## terra 1.8.93
 
-## Including Plots
+``` r
+library(sf)             # vector polygon handling
+```
 
-You can also embed plots, for example:
+    ## Linking to GEOS 3.13.1, GDAL 3.11.4, PROJ 9.7.0; sf_use_s2() is TRUE
 
-![](rmd_practice_files/figure-gfm/pressure-1.png)<!-- -->
+``` r
+library(FedData)        # CDL download via PRISM/NASS API
+```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to
-prevent printing of the R code that generated the plot.
+    ## Warning: package 'FedData' was built under R version 4.5.3
+
+    ## You have loaded FedData v4.
+    ## As of FedData v4 we have retired
+    ## dependencies on the `sp` and `raster` packages.
+    ## All functions in FedData v4 return `terra` (raster)
+    ## or `sf` (vector) objects by default, and there may be
+    ## other breaking changes.
