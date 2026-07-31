@@ -2,7 +2,9 @@
 title: "RMD Practice Doc"
 author: "jea"
 date: "2026-07-31"
-output: github_document
+output:
+  html_document:
+    keep_md: true    
 ---
 I am now writing a single sentence. 
 ```{r}
