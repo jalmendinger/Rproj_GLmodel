@@ -2,7 +2,7 @@
 title: "RMD Practice Doc"
 author: "jea"
 date: "2026-07-31"
-output: html_document
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
