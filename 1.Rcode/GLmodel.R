@@ -120,3 +120,4 @@ writeRaster(cdl_SA,
 #   use terra to look at it instead.
 # rast(my_output_gpkg)
 # describe(my_output_gpkg)
+# 
