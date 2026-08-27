@@ -13,8 +13,10 @@ test suite, and no package namespace.
 
 Directories are numbered variants of the standard R-package layout (see `README.md`):
 
-- `1.Rcode/` — R scripts (`GLmodel.R` is the main analysis script)
-- `2.data_raw/` — raw inputs; **gitignored**, contains a large geopackage (`erieSW_hydro.gpkg`, ~150 MB)
+- `1.Rcode/` — R scripts (`GLmodel.R` is the main analysis script); `1.Rcode/oldCode/` parks
+  superseded scripts that are kept deliberately, not dead weight — see "CDL data source"
+- `2.data_raw/` — raw inputs; **gitignored**, holds the hydrology geopackage (`erieSW_hydro.gpkg`,
+  ~150 MB) and the 2025 CDL raster for the southwestern Lake Erie basin (`erieSW_cdl.tif`, ~55 MB)
 - `3.data_proc/` — processed intermediates
 - `4.results/` — plots, reports, outputs
 - `tmp/` — scratch / practice files, not part of the analysis
@@ -31,31 +33,51 @@ Open `Rproj_GLmodel.Rproj` in RStudio and source `1.Rcode/GLmodel.R`, or from a 
 Rscript 1.Rcode/GLmodel.R
 ```
 
-Key packages: `tidyverse`, `sf` (vector), `terra` (raster), `httr` (CDL download), `here` (paths).
-Both CDL packages have been dropped — see "CDL downloads" below. `FedData` and `CropScapeR` remain
-commented out in `GLmodel.R`; don't reintroduce either without reading that section first.
+Key packages: `tidyverse`, `sf` (vector), `terra` (raster), `here` (paths). No CDL download
+package is loaded any more — see "CDL data source" below before reintroducing one.
 
 ## Analysis pipeline (current state)
 
-1. Read the study-area polygon layer (`my_poly <- "ws_eriesw_sand"`) from the geopackage with
-   `st_read()` and `st_transform(crs = 5070)` (CONUS Albers — the project's standard CRS; keep
-   rasters and vectors in it).
-2. Download Cropland Data Layer rasters for the study-area bounding box via
-   `get_cdl_wcs(template = sf_SA, year = my_year, res = my_cdl_res, label = my_label)`, defined in
-   `1.Rcode/get_cdl_wcs.R`. `my_year` defaults to last calendar year; `cdl_years_available()`
-   reports what the server actually has. Downloads are cached under `3.data_proc/cdl_cache/`.
-3. `crop()` + `mask()` the CDL raster to the study-area polygon, then write it twice: as
-   `3.data_proc/cdlSA.tif` (the copy to read back for analysis) and into `3.data_proc/output.gpkg`
-   as raster layer `cdlSA` (the single-file copy).
+1. Read the study-area polygon layer (`my_poly <- "ws_eriesw_sand"`, the Sandusky watershed) from
+   the geopackage with `st_read()` and `st_transform(crs = 5070)` (CONUS Albers — the project's
+   standard CRS; keep rasters and vectors in it).
+2. Read the Cropland Data Layer raster from the local file `2.data_raw/erieSW_cdl.tif`
+   (`my_input_cdl`) with `terra::rast()`. It covers the whole southwestern Lake Erie basin, so it
+   still has to be clipped. Nothing in the pipeline touches the network.
+3. `crop()` + `mask()` the CDL to the study-area polygon, then write the result to
+   `3.data_proc/cdl_eriesw_sand.tif` (`my_output_geotiff`).
 4. Downstream land-conversion modeling is not yet written.
 
 User-tunable inputs are gathered in the `USER SPECIFIED DATA` block near the top of `GLmodel.R`;
 add new configurables there rather than scattering them through the script.
 
-## CDL downloads
+## Clipping and writing the CDL
 
-`get_cdl_wcs()` talks to the CropScape web coverage service directly rather than through a package.
-The full reasoning is in the header comment of `1.Rcode/get_cdl_wcs.R`; the short version:
+- **Project the polygon onto the raster, never the raster onto the polygon.** `erieSW_cdl.tif` is
+  tagged `Albers_Conical_Equal_Area` with no EPSG code, but `same.crs(cdl_SA, "EPSG:5070")` is
+  `TRUE` — it is the same projection as the polygon, just spelled without the code. Reprojecting
+  the raster would resample it, and CDL values are class codes, not measurements: they must never
+  be averaged or interpolated. `crop()`/`mask()` do not reproject, so the output keeps the source
+  CRS and stays on the CDL's own 30 m grid.
+- **Write a geotiff, not a geopackage** (see the appendix for why). `datatype = "INT1U"` holds the
+  0–255 CDL codes in one byte; `NAflag = 255` marks the masked cells, safe because code 255 is
+  unused in the CDL class table (blank name, national histogram count 0) and does not occur in the
+  Sandusky clip. LZW compression is lossless, which matters for class codes.
+- Verified on the current output: 2498 × 3701 cells, 3,982,455 masked to `NA`, zero value
+  mismatches against a fresh re-clip of the source, class and color tables intact, 1.2 MB on disk.
+
+## CDL data source
+
+The pipeline reads a local file because the federal NASS/CropScape servers were down. The download
+code is parked, not deleted, and should come back if those servers become dependable again:
+
+- `1.Rcode/oldCode/get_cdl_wcs.R` — `get_cdl_wcs()`, a direct call to the CropScape web coverage
+  service, plus `cdl_years_available()`. The best of the three approaches; read its header comment
+  first. It cached downloads under `3.data_proc/cdl_cache/`.
+- `1.Rcode/oldCode/GLmodelv1.R` — the earlier version of the main script, built on
+  `CropScapeR::GetCDLData()`, with a commented `FedData::get_nass_cdl()` attempt below it.
+
+Hard-won details, worth keeping whichever route is revived:
 
 - `FedData::get_nass_cdl()` sends no resolution parameter, so the server works at its advertised
   10 m grid and refuses anything over 4096 cells a side (`msWCSGetCoverage20(): ... Raster size
@@ -66,26 +88,29 @@ The full reasoning is in the header comment of `1.Rcode/get_cdl_wcs.R`; the shor
   (commit 4416acb, `.Rhistory`) even though the server was up. A reboot cleared it; the SSL
   workaround tried at the time (`httr::set_config(config(ssl_verifypeer = FALSE))`) was not the fix
   and is not needed. If it recurs, suspect local network/session state rather than the R logic.
+- **Grid alignment is not optional.** The real CDL 30 m grid has cell boundaries at EPSG:5070
+  coordinates ≡ 15 (mod 30); `CDL_GRID_ANCHOR` sits on that grid and every request is snapped to
+  it. Requests off that grid still succeed, but ~4% of cells come back as a neighbouring class, and
+  which ones changes with the request window, so tiles stop agreeing where they meet. Measured on
+  the Sandusky area: anchored correctly, a 4-tile download matched a single-request download on all
+  9,257,500 cells, and matched an authoritative CropScape REST clip everywhere that clip had data.
+  The local `erieSW_cdl.tif` is on that grid (its extent edges are ≡ 15 mod 30), so clips of it
+  inherit the alignment.
 
-**Grid alignment is not optional.** The real CDL 30 m grid has cell boundaries at EPSG:5070
-coordinates ≡ 15 (mod 30); `CDL_GRID_ANCHOR` sits on that grid and every request is snapped to it.
-Requests off that grid still succeed, but ~4% of cells come back as a neighbouring class, and which
-ones changes with the request window, so tiles stop agreeing where they meet. Measured on the
-Sandusky area: anchored correctly, a 4-tile download matched a single-request download on all
-9,257,500 cells, and matched an authoritative CropScape REST clip everywhere that clip had data.
+## Appendix: why not a geopackage
 
-## Writing rasters to the geopackage
+An earlier version wrote the clipped raster into `3.data_proc/output.gpkg`. That was abandoned —
+too easy to lose data on the way in. Three traps, recorded in case a geopackage is ever needed:
 
-Three traps, all handled in `GLmodel.R`:
-
-- Byte datatypes are stored as RGBA picture tiles, so `datatype = "FLT4S"` is used to keep one band.
+- Byte datatypes are stored as RGBA picture tiles, so `datatype = "FLT4S"` was needed to keep one
+  band — which defeats the point of a compact class raster.
 - **A geopackage raster band carries no NoData value at all** — `describe()` shows no NoData entry,
-  and neither `NAflag=` nor `gdal = "NODATA_VALUE=..."` puts one there. Masked cells therefore come
-  back as a mix of `NA` and `0`. Recoverable, because CDL code 0 is "Background" and never a real
-  class, so read the geopackage copy back as `rast(my_output_gpkg) |> subst(0, NA)`. This is why
-  `cdlSA.tif` exists — it round-trips the mask exactly (verified: 3,972,583 cells masked, 3,972,583
-  `NA` on read), and is the copy to use for analysis.
-- Writing a `RASTER_TABLE` name that already exists fails, so the file is deleted and rebuilt.
+  and neither `NAflag=` nor `gdal = "NODATA_VALUE=..."` puts one there. Masked cells come back as a
+  mix of `NA` and `0`. Recoverable, because CDL code 0 is "Background" and never a real class, so
+  the copy had to be read back as `rast(my_output_gpkg) |> subst(0, NA)`. A geotiff round-trips the
+  mask exactly and needs no such fixup.
+- Writing a `RASTER_TABLE` name that already exists fails, so the file had to be deleted and
+  rebuilt each run.
 
 `sf::st_layers()` does not list raster layers — inspect with `terra::rast()` / `terra::describe()`.
 
