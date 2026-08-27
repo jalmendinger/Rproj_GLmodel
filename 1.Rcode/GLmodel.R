@@ -45,8 +45,12 @@ my_poly <- "ws_eriesw_sand"
 my_input_cdl <- here("2.data_raw", "erieSW_cdl.tif")
 # geotiff to write the clipped result into; overwritten on each run
 my_output_geotiff <- here("3.data_proc", "cdl_eriesw_sand.tif")
+# reporting outputs: the map, and the class-area table behind it
+my_output_map <- here("4.results", "cdl_eriesw_sand.png")
+my_output_csv <- here("4.results", "cdl_eriesw_sand_area.csv")
 # CDL vintage of my_input_cdl.  This no longer drives a download -- it just
-#   labels which year's data are in the local file (see 2025_30m_cdls.tif.vat.dbf).
+#   labels which year's data are in the local file, which was cut from the
+#   national 2025 CDL release.
 my_year <- 2025
 
 #-------------------------------------------------------------------------
@@ -211,6 +215,13 @@ cdl_area <- cdl_area[cdl_area$cells > 0 | cdl_area$code %in% cdl_names$value[dup
 cdl_area <- cdl_area[order(-cdl_area$cells), ]
 cdl_area
 
+# Save it for the loading model and for reporting.  cells is the exact count, so
+#   pct and ha are written unrounded rather than pre-formatted -- rounding here
+#   would quietly zero out the classes that cover only a handful of cells.
+# row.names = FALSE keeps write.csv from adding a column of row numbers, which
+#   here are just leftover positions from the category table.
+write.csv(cdl_area, my_output_csv, row.names = FALSE)
+
 top_n <- head(cdl_area, my_n_top)
 
 #-------------------------------------------------------------------------
@@ -241,16 +252,29 @@ coltab(cdl_map) <- data.frame(
             "grey88")
 )
 
-# Draw it.  mar leaves room on the right for the legend; add the watershed
-#   boundary on top so the mask is easy to check by eye.
-png(here("4.results", "cdl_eriesw_sand.png"),
-    width = 1500, height = 1900, res = 150)
-plot(cdl_map,
-     main = paste0("CDL ", my_year, " - Sandusky watershed (", my_poly, ")"),
-     mar  = c(2.5, 2.5, 2.5, 11),
-     plg  = list(cex = 0.85),
-     axes = TRUE)
-plot(v_SA, add = TRUE, border = "black", lwd = 1.5)
+# Draw it.  The drawing is wrapped in a little function so the very same call
+#   can be sent to two places -- the png file and the Plots pane -- without
+#   writing the plot code twice, where the two copies would drift apart.
+# mar leaves room on the right for the legend; the watershed boundary goes on
+#   top so the mask is easy to check by eye.
+draw_cdl_map <- function() {
+  plot(cdl_map,
+       main = paste0("CDL ", my_year, " - Sandusky watershed (", my_poly, ")"),
+       mar  = c(2.5, 2.5, 2.5, 11),
+       plg  = list(cex = 0.85),
+       axes = TRUE)
+  plot(v_SA, add = TRUE, border = "black", lwd = 1.5)
+}
+
+# png() opens a file as a graphics device: everything drawn from here on goes
+#   into the file and nothing appears on screen, until dev.off() closes it and
+#   hands the drawing back to the screen device.
+png(my_output_map, width = 1500, height = 1900, res = 150)
+draw_cdl_map()
 dev.off()
 
-# In RStudio, drop the png()/dev.off() lines to draw straight to the Plots pane.
+# Now draw the same map again, this time to RStudio's Plots pane.
+# interactive() is TRUE in RStudio and FALSE under Rscript, where there is no
+#   Plots pane and a second draw would only leave a stray Rplots.pdf behind.
+if (interactive()) draw_cdl_map()
+
