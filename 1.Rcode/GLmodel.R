@@ -140,3 +140,117 @@ cat("Same CRS as EPSG:5070? ", same.crs(cdl_check, "EPSG:5070"), "\n")
 cat("Cells masked to NA:", global(is.na(cdl_check), "sum", na.rm = TRUE)[[1]], "\n")
 
 # plot(cdl_check)
+
+#-------------------------------------------------------------------------
+# MAP THE CLIPPED CDL
+# 43 CDL classes show up in the Sandusky, which is far too many to read in one
+#   legend, so lump everything past the biggest few into a single "Other".
+my_n_top <- 14                    # how many classes to name in the legend
+my_other_code <- 300              # a code no CDL class uses, to stand for "Other"
+
+#-------------------------------------------------------------------------
+# COLLAPSE DUPLICATE CLASS NAMES
+# The class name is what the analysis is about, and a few names are carried by
+#   two different codes: "Barren" is both 65 and 131, "Shrubland" both 64 and
+#   152.  Those are one land cover each, so merge them onto a single code.
+# Merge onto the HIGHER code of each pair, because that is the one the CDL
+#   actually uses here: in this raster 131 and 152 hold all the cells while 65
+#   and 64 hold none.  Keeping the busy code means no cell is ever recoded and
+#   the map stays literally the CDL's own data; the emptied lower code drops to
+#   zero.  Both members of each pair carry identical colors, so the merge costs
+#   nothing visually either way.
+
+# The category table maps code -> name.  Drop the unused codes, whose names are
+#   blank, so they are not all treated as one big duplicate group.
+cdl_levs <- cats(cdl_SA)[[1]]
+cdl_names <- cdl_levs[nzchar(trimws(cdl_levs$Class_Names)), c("value", "Class_Names")]
+
+# For each name, the highest code carrying it becomes the one to keep.
+# tapply() splits the codes by name and applies max() to each group; the result
+#   is indexed by name, so cdl_names$Class_Names looks the keeper up per row.
+high_code <- tapply(cdl_names$value, cdl_names$Class_Names, max)
+cdl_names$keep_code <- as.integer(high_code[cdl_names$Class_Names])
+
+# The rows where the code is not its own keeper are exactly the ones to recode.
+# Here both of them are empty, so subst() has no cells to move -- but the rule
+#   still holds if a future year does split a name across two used codes.
+dup_rows <- cdl_names$value != cdl_names$keep_code
+cdl_names[dup_rows, ]              # look at what will be merged
+
+# Work on a numeric copy: stripping the category and color tables makes freq()
+#   and subst() deal in codes, and codes are what we are merging.
+cdl_map <- cdl_SA
+levels(cdl_map) <- NULL
+coltab(cdl_map) <- NULL
+cdl_map <- subst(cdl_map,
+                 from = cdl_names$value[dup_rows],
+                 to   = cdl_names$keep_code[dup_rows])
+
+#-------------------------------------------------------------------------
+# COUNT CELLS BY CLASS
+# freq() now returns one row per surviving code, with the duplicates already
+#   summed into the lower code of each pair.
+cdl_freq <- freq(cdl_map)
+n_cell   <- sum(cdl_freq$count)                     # non-NA cells, i.e. the watershed
+
+# Build the full class table: every named CDL code, its cell count, and its share
+#   of the watershed.  Codes that do not occur -- including the upper member of
+#   each merged pair, now emptied -- sit at zero.
+cdl_area <- data.frame(code  = cdl_names$value,
+                       name  = cdl_names$Class_Names,
+                       cells = 0L)
+cdl_area$cells[match(cdl_freq$value, cdl_area$code)] <- cdl_freq$count
+cdl_area$pct <- 100 * cdl_area$cells / n_cell
+# CDL cells are 30 m x 30 m = 900 m2; 1 ha = 10,000 m2
+cdl_area$ha <- cdl_area$cells * 900 / 10000
+
+# Keep the classes that are actually in play: those with cells, plus the emptied
+#   halves of the merged pairs -- here the lower codes 64 and 65 -- which are
+#   worth seeing at zero as a record of the merge.  Biggest first.
+cdl_area <- cdl_area[cdl_area$cells > 0 | cdl_area$code %in% cdl_names$value[dup_rows], ]
+cdl_area <- cdl_area[order(-cdl_area$cells), ]
+cdl_area
+
+top_n <- head(cdl_area, my_n_top)
+
+#-------------------------------------------------------------------------
+# BUILD THE MAP
+# Send every class outside the top N to my_other_code.  subst() does the swap.
+cdl_map <- subst(cdl_map,
+                 from = setdiff(cdl_freq$value, top_n$code),
+                 to   = my_other_code)
+
+# Re-attach a category table holding just those classes, each label carrying its
+#   share of the watershed.
+levels(cdl_map) <- data.frame(
+  value = c(top_n$code, my_other_code),
+  label = c(sprintf("%s  %.1f%%", top_n$name, top_n$pct),
+            sprintf("Other (%d classes)  %.1f%%",
+                    sum(cdl_area$cells > 0) - my_n_top,
+                    100 - sum(top_n$pct)))
+)
+
+# coltab() gives the source file's color table as value/red/green/blue/alpha;
+#   match the top classes to their rows so the map keeps the CDL's own official
+#   colors (corn yellow, soybeans green), and gray out the "Other" bucket.
+cdl_ct <- coltab(cdl_SA)[[1]]
+i <- match(top_n$code, cdl_ct$value)
+coltab(cdl_map) <- data.frame(
+  value = c(top_n$code, my_other_code),
+  col   = c(rgb(cdl_ct$red[i], cdl_ct$green[i], cdl_ct$blue[i], maxColorValue = 255),
+            "grey88")
+)
+
+# Draw it.  mar leaves room on the right for the legend; add the watershed
+#   boundary on top so the mask is easy to check by eye.
+png(here("4.results", "cdl_eriesw_sand.png"),
+    width = 1500, height = 1900, res = 150)
+plot(cdl_map,
+     main = paste0("CDL ", my_year, " - Sandusky watershed (", my_poly, ")"),
+     mar  = c(2.5, 2.5, 2.5, 11),
+     plg  = list(cex = 0.85),
+     axes = TRUE)
+plot(v_SA, add = TRUE, border = "black", lwd = 1.5)
+dev.off()
+
+# In RStudio, drop the png()/dev.off() lines to draw straight to the Plots pane.
