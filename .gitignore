@@ -1,4 +1,6 @@
 .Rproj.user
 .Rhistory
+.RData
+.claude/settings.local.json
 2.data_raw
 3.data_proc
